@@ -1,0 +1,65 @@
+name: Update FPF Fantasy
+
+on:
+  schedule:
+    - cron: "34 12 * * 2"
+    - cron: "34 12 * * 5"
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  SEASON: "2026"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas
+      - name: Download the newest NFL data (nflverse)
+        run: |
+          set -euo pipefail
+          mkdir -p data
+          BASE=https://github.com/nflverse/nflverse-data/releases/download
+          for f in \
+            snap_counts/snap_counts_${SEASON}.csv \
+            stats_player/stats_player_week_${SEASON}.csv \
+            schedules/games.csv \
+            pbp/play_by_play_${SEASON}.csv.gz \
+            ftn_charting/ftn_charting_${SEASON}.csv; do
+            curl -fsSL --retry 3 -o "data/$(basename "$f")" "$BASE/$f"
+          done
+      - name: Build the website
+        run: |
+          set -euo pipefail
+          python build_data.py data/snap_counts_${SEASON}.csv data/stats_player_week_${SEASON}.csv data/games.csv usage.json
+          python build_schemes.py data/play_by_play_${SEASON}.csv.gz data/ftn_charting_${SEASON}.csv data/stats_player_week_${SEASON}.csv data/games.csv schemes.json
+          mkdir -p public
+          python assemble.py template.html usage.json schemes.json public/index.html --standalone
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
